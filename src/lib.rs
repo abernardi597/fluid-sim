@@ -1,4 +1,7 @@
 use std::borrow::Cow;
+use rand::SeedableRng;
+use rand_distr::Distribution;
+use wgpu::util::DeviceExt;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -81,7 +84,7 @@ pub async fn run(wb: WindowBuilder) {
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: "vs_main",
-            buffers: &[],
+            buffers: &[Splat::layout()],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -106,8 +109,19 @@ pub async fn run(wb: WindowBuilder) {
 
     surface.configure(&device, &config);
 
+    let mut rng = rand::rngs::StdRng::from_entropy();
+    let splats: Vec<Splat> = std::iter::repeat_with(move || Splat::from_sphere(&mut rng)).take(1 << 16).collect();
+    let splat_buffer = device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("Splat Buffer"),
+            contents: bytemuck::cast_slice(&splats),
+            usage: wgpu::BufferUsages::VERTEX,
+        }
+    );
+
     event_loop.run(move |event, _, control_flow| {
         let _ = (&instance, &adapter, &shader, &pipeline_layout);
+        let _ = &splats;
 
         *control_flow = ControlFlow::Wait;
         match event {
@@ -147,7 +161,8 @@ pub async fn run(wb: WindowBuilder) {
                         occlusion_query_set: None,
                     });
                     rpass.set_pipeline(&render_pipeline);
-                    rpass.draw(0..3, 0..1);
+                    rpass.set_vertex_buffer(0, splat_buffer.slice(..));
+                    rpass.draw(0..3 as u32, 0..splats.len() as u32);
                 }
 
                 queue.submit(Some(encoder.finish()));
@@ -160,4 +175,31 @@ pub async fn run(wb: WindowBuilder) {
             _ => {}
         }
     });
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Splat {
+    position: [f32; 3],
+    normal: [f32; 3],
+}
+
+impl Splat {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+
+    fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Splat>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+
+    fn from_sphere<R: rand::Rng>(rng: &mut R) -> Splat {
+        let p = rand_distr::UnitSphere.sample(rng);
+        Splat {
+            position: p.clone(),
+            normal: p,
+        }
+    }
 }
