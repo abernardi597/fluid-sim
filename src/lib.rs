@@ -85,9 +85,58 @@ pub async fn run(wb: WindowBuilder) {
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
     });
 
+    // position the camera 1 unit up and 2 units back
+    // +z is out of the screen
+    let mut camera = Camera {
+        eye: (0.0, 1.0, 2.0).into(),
+        // have it look at the origin
+        target: (0.0, 0.0, 0.0).into(),
+        // which way is "up"
+        up: glam::Vec3::Y,
+        aspect: config.width as f32 / config.height as f32,
+        fovy: 45.0,
+        znear: 0.1,
+        zfar: 100.0,
+    };
+
+    let camera_buffer = device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera.as_uniform()]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        }
+    );
+
+    let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }
+        ],
+        label: Some("Camera Bind Group Layout"),
+    });
+
+    let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &camera_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }
+        ],
+        label: Some("Camera Bind Group"),
+    });
+
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[],
+        bind_group_layouts: &[&camera_bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -104,14 +153,18 @@ pub async fn run(wb: WindowBuilder) {
             entry_point: "fs_main",
             targets: &[Some(swapchain_format.into())],
         }),
-        primitive: wgpu::PrimitiveState::default(),
+        primitive: wgpu::PrimitiveState {
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode:Some(wgpu::Face::Back),
+            ..Default::default()
+        },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
     });
 
     let mut rng = rand::rngs::StdRng::from_entropy();
-    let splats: Vec<Splat> = std::iter::repeat_with(move || Splat::from_sphere(&mut rng)).take(1 << 16).collect();
+    let splats: Vec<Splat> = std::iter::repeat_with(move || Splat::from_sphere(&mut rng)).take(1 << 18).collect();
     let splat_buffer = device.create_buffer_init(
         &wgpu::util::BufferInitDescriptor {
             label: Some("Splat Buffer"),
@@ -134,6 +187,8 @@ pub async fn run(wb: WindowBuilder) {
                 config.width = size.width;
                 config.height = size.height;
                 surface.configure(&device, &config);
+                camera.aspect = config.width as f32 / config.height as f32;
+                queue.write_buffer(&camera_buffer, 0, bytemuck::cast_slice(&[camera.as_uniform()]));
                 // On macos the window needs to be redrawn manually after resizing
                 window.request_redraw();
             }
@@ -162,6 +217,7 @@ pub async fn run(wb: WindowBuilder) {
                         occlusion_query_set: None,
                     });
                     rpass.set_pipeline(&render_pipeline);
+                    rpass.set_bind_group(0, &camera_bind_group, &[]);
                     rpass.set_vertex_buffer(0, splat_buffer.slice(..));
                     rpass.draw(0..3 as u32, 0..splats.len() as u32);
                 }
@@ -203,4 +259,33 @@ impl Splat {
             normal: p,
         }
     }
+}
+
+struct Camera {
+    eye: glam::Vec3,
+    target: glam::Vec3,
+    up: glam::Vec3,
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Camera {
+    fn as_uniform(&self) -> CameraUniform {
+        let view = glam::Mat4::look_at_rh(self.eye, self.target, self.up);
+        let proj = glam::Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar);
+
+        CameraUniform {
+            pos: self.eye.extend(0.0),
+            view_proj: proj * view,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    pos: glam::Vec4,
+    view_proj: glam::Mat4,
 }

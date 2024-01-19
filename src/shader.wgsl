@@ -1,3 +1,11 @@
+struct Camera {
+    pos: vec4<f32>,
+    view_proj: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> camera: Camera;
+
 struct SplatData {
     @location(0) center: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -47,21 +55,18 @@ fn get_tri_offset(index: u32, n: vec3<f32>) -> vec3<f32> {
     return R * vec3<f32>(x, 0.0);
 }
 
-// TODO: Use uniform view-projection matrix
-const CAMERA_POS = vec3<f32>(0.0, 0.0, -1.0);
-const SCALE      = 0.5;
-const SIZE       = 0.0078125;
+const SIZE = 0.0078125;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32, in: SplatData) -> VertexOutput {
     var out: VertexOutput;
     let n = normalize(in.normal);
-    let x = get_tri_offset(vertex_index, n);
+    let offset = get_tri_offset(vertex_index, n);
 
-    out.position = vec4<f32>(in.center * SCALE + x * SIZE - CAMERA_POS, 1.0);
+    out.position = camera.view_proj * vec4<f32>(in.center + offset * SIZE, 1.0);
     out.center = in.center;
     out.normal = n;
-    out.offset = x;
+    out.offset = offset;
     return out;
 }
 
@@ -82,7 +87,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
 
-    let world_position = in.center * SCALE + in.offset * SIZE;
+    let world_position = in.center + in.offset * SIZE;
 
     // Blinn-Phong shading
     let ambient_color = LIGHT_COLOR * AMBIENT;
@@ -90,10 +95,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let to_light = normalize(LIGHT_POS - world_position);
     let diffuse_color = LIGHT_COLOR * DIFFUSE * max(dot(in.normal, to_light), 0.0);
 
-    let to_view = normalize(CAMERA_POS - world_position);
+    let to_view = normalize(camera.pos.xyz - world_position);
     let specular_color = LIGHT_COLOR * SPECULAR * pow(max(dot(to_view, reflect(-to_light, in.normal)), 0.0), SHINY);
 
     return vec4<f32>(ambient_color + diffuse_color + specular_color, 1.0);
+    // return vec4<f32>(1.0);
 }
 
 fn project_onto(point: vec3<f32>, planar: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
