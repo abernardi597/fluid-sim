@@ -64,6 +64,22 @@ pub async fn run(wb: WindowBuilder) {
         .await
         .expect("Failed to create device");
 
+
+    let swapchain_capabilities = surface.get_capabilities(&adapter);
+    let swapchain_format = swapchain_capabilities.formats[0];
+
+    let mut config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: swapchain_format,
+        width: size.width,
+        height: size.height,
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: swapchain_capabilities.alpha_modes[0],
+        view_formats: vec![],
+    };
+
+    surface.configure(&device, &config);
+
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: None,
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
@@ -74,9 +90,6 @@ pub async fn run(wb: WindowBuilder) {
         bind_group_layouts: &[],
         push_constant_ranges: &[],
     });
-
-    let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities.formats[0];
 
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: None,
@@ -96,18 +109,6 @@ pub async fn run(wb: WindowBuilder) {
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
     });
-
-    let mut config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: swapchain_format,
-        width: size.width,
-        height: size.height,
-        present_mode: wgpu::PresentMode::Fifo,
-        alpha_mode: swapchain_capabilities.alpha_modes[0],
-        view_formats: vec![],
-    };
-
-    surface.configure(&device, &config);
 
     let mut rng = rand::rngs::StdRng::from_entropy();
     let splats: Vec<Splat> = std::iter::repeat_with(move || Splat::from_sphere(&mut rng)).take(1 << 16).collect();
